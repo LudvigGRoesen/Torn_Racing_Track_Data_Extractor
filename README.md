@@ -30,7 +30,7 @@ Authorization: Bearer <token>
 
 ## UI and export formats
 
-The script adds a green `Collect` button in the Torn race title bar next to the track info icon. The button menu supports:
+The script adds a green `Collect` button in the Torn race title bar to the left of the track info icon. The menu is rendered as a body-level popover so Torn containers do not clip it. The button menu supports:
 
 - Upload latest JSON snapshot
 - Upload all JSON snapshots

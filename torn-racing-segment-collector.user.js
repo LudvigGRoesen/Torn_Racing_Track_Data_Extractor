@@ -308,7 +308,11 @@
   function ensureControls() {
     const titleBar = document.querySelector('.drivers-list .title-black');
 
-    if (!titleBar || document.getElementById('trscControls')) {
+    if (!titleBar) {
+      return;
+    }
+
+    if (document.getElementById('trscControls')) {
       return;
     }
 
@@ -316,26 +320,20 @@
     controls.id = 'trscControls';
     controls.innerHTML = `
       <button id="trscCollectBtn" type="button">Collect</button>
-      <div id="trscMenu">
-        <button id="trscUploadLatest" type="button">Upload latest</button>
-        <button id="trscUploadAll" type="button">Upload all</button>
-        <button id="trscJson" type="button">JSON</button>
-        <button id="trscCsv" type="button">CSV</button>
-        <button id="trscClear" type="button">Clear</button>
-        <span id="trscStatus"></span>
-      </div>
     `;
+
+    ensureCollectMenu();
     const infoWrap = titleBar.querySelector('.track-info-wrap');
 
     if (infoWrap) {
-      titleBar.insertBefore(controls, infoWrap);
+      infoWrap.parentNode.insertBefore(controls, infoWrap);
     } else {
       titleBar.appendChild(controls);
     }
 
     document.getElementById('trscCollectBtn').addEventListener('click', (event) => {
       event.stopPropagation();
-      document.getElementById('trscMenu').classList.toggle('trscOpen');
+      toggleCollectMenu();
       updateButtonLabel();
     });
     document.getElementById('trscUploadLatest').addEventListener('click', uploadLatestSnapshot);
@@ -344,17 +342,65 @@
     document.getElementById('trscCsv').addEventListener('click', downloadCsv);
     document.getElementById('trscClear').addEventListener('click', clearSnapshots);
     document.addEventListener('click', closeCollectMenu);
+    window.addEventListener('resize', positionCollectMenu, { passive: true });
+    window.addEventListener('scroll', positionCollectMenu, { passive: true });
     updateButtonLabel();
+  }
+
+  function ensureCollectMenu() {
+    if (document.getElementById('trscMenu')) {
+      return;
+    }
+
+    const menu = document.createElement('div');
+    menu.id = 'trscMenu';
+    menu.innerHTML = `
+      <button id="trscUploadLatest" type="button">Upload latest</button>
+      <button id="trscUploadAll" type="button">Upload all</button>
+      <button id="trscJson" type="button">JSON</button>
+      <button id="trscCsv" type="button">CSV</button>
+      <button id="trscClear" type="button">Clear</button>
+      <span id="trscStatus"></span>
+    `;
+    document.body.appendChild(menu);
+  }
+
+  function toggleCollectMenu() {
+    const menu = document.getElementById('trscMenu');
+
+    if (!menu) {
+      return;
+    }
+
+    menu.classList.toggle('trscOpen');
+    positionCollectMenu();
+  }
+
+  function positionCollectMenu() {
+    const button = document.getElementById('trscCollectBtn');
+    const menu = document.getElementById('trscMenu');
+
+    if (!button || !menu || !menu.classList.contains('trscOpen')) {
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth || 130;
+    const left = Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth));
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
   }
 
   function closeCollectMenu(event) {
     const controls = document.getElementById('trscControls');
+    const menu = document.getElementById('trscMenu');
 
-    if (!controls || controls.contains(event.target)) {
+    if (!controls || controls.contains(event.target) || menu?.contains(event.target)) {
       return;
     }
 
-    document.getElementById('trscMenu')?.classList.remove('trscOpen');
+    menu?.classList.remove('trscOpen');
   }
 
   function updateButtonLabel() {
@@ -393,7 +439,7 @@
       z-index: 30;
       display: inline-flex;
       align-items: center;
-      margin: 3px 29px 0 6px;
+      margin: 3px 5px 0 6px;
       font: 11px Arial, sans-serif;
     }
     #trscCollectBtn {
@@ -413,11 +459,10 @@
       background: linear-gradient(#32cc6e, #1c9147);
     }
     #trscMenu {
-      position: absolute;
-      top: 22px;
-      right: 0;
+      position: fixed;
       display: none;
       min-width: 122px;
+      z-index: 2147483647;
       padding: 5px;
       border: 1px solid #444;
       border-radius: 4px;
