@@ -306,35 +306,68 @@
   }
 
   function ensureControls() {
-    if (document.getElementById('trscControls')) {
+    const titleBar = document.querySelector('.drivers-list .title-black');
+
+    if (!titleBar || document.getElementById('trscControls')) {
       return;
     }
 
     const controls = document.createElement('div');
     controls.id = 'trscControls';
     controls.innerHTML = `
-      <button id="trscUploadLatest" type="button">Upload latest</button>
-      <button id="trscUploadAll" type="button">Upload all</button>
-      <button id="trscJson" type="button">JSON</button>
-      <button id="trscCsv" type="button">CSV</button>
-      <button id="trscClear" type="button">Clear</button>
-      <span id="trscStatus"></span>
+      <button id="trscCollectBtn" type="button">Collect</button>
+      <div id="trscMenu">
+        <button id="trscUploadLatest" type="button">Upload latest</button>
+        <button id="trscUploadAll" type="button">Upload all</button>
+        <button id="trscJson" type="button">JSON</button>
+        <button id="trscCsv" type="button">CSV</button>
+        <button id="trscClear" type="button">Clear</button>
+        <span id="trscStatus"></span>
+      </div>
     `;
-    document.body.appendChild(controls);
+    const infoWrap = titleBar.querySelector('.track-info-wrap');
 
+    if (infoWrap) {
+      titleBar.insertBefore(controls, infoWrap);
+    } else {
+      titleBar.appendChild(controls);
+    }
+
+    document.getElementById('trscCollectBtn').addEventListener('click', (event) => {
+      event.stopPropagation();
+      document.getElementById('trscMenu').classList.toggle('trscOpen');
+      updateButtonLabel();
+    });
     document.getElementById('trscUploadLatest').addEventListener('click', uploadLatestSnapshot);
     document.getElementById('trscUploadAll').addEventListener('click', uploadAllSnapshots);
     document.getElementById('trscJson').addEventListener('click', downloadJson);
     document.getElementById('trscCsv').addEventListener('click', downloadCsv);
     document.getElementById('trscClear').addEventListener('click', clearSnapshots);
+    document.addEventListener('click', closeCollectMenu);
     updateButtonLabel();
+  }
+
+  function closeCollectMenu(event) {
+    const controls = document.getElementById('trscControls');
+
+    if (!controls || controls.contains(event.target)) {
+      return;
+    }
+
+    document.getElementById('trscMenu')?.classList.remove('trscOpen');
   }
 
   function updateButtonLabel() {
     const status = document.getElementById('trscStatus');
+    const button = document.getElementById('trscCollectBtn');
+    const count = getSnapshots().length;
 
     if (status) {
-      status.textContent = `${getSnapshots().length} captured`;
+      status.textContent = `${count} captured`;
+    }
+
+    if (button) {
+      button.title = `${count} race segment snapshot${count === 1 ? '' : 's'} captured`;
     }
   }
 
@@ -355,35 +388,64 @@
 
   GM_addStyle(`
     #trscControls {
-      position: fixed;
-      right: 10px;
-      bottom: 10px;
-      z-index: 1000000;
-      display: flex;
-      gap: 4px;
+      position: relative;
+      float: right;
+      z-index: 30;
+      display: inline-flex;
       align-items: center;
-      padding: 6px;
-      border: 1px solid #444;
-      border-radius: 6px;
-      background: rgba(15,15,15,.92);
-      color: #ddd;
+      margin: 3px 29px 0 6px;
       font: 11px Arial, sans-serif;
     }
-    #trscControls button {
-      border: 1px solid #666;
+    #trscCollectBtn {
+      border: 1px solid #1c8d45;
+      border-radius: 3px;
+      background: linear-gradient(#27b85f, #167d3c);
+      color: #fff;
+      font: inherit;
+      font-weight: bold;
+      line-height: 14px;
+      padding: 2px 8px;
+      cursor: pointer;
+      text-shadow: 0 1px 0 rgba(0,0,0,.4);
+    }
+    #trscCollectBtn:hover {
+      border-color: #52df82;
+      background: linear-gradient(#32cc6e, #1c9147);
+    }
+    #trscMenu {
+      position: absolute;
+      top: 22px;
+      right: 0;
+      display: none;
+      min-width: 122px;
+      padding: 5px;
+      border: 1px solid #444;
       border-radius: 4px;
+      background: rgba(15,15,15,.96);
+      box-shadow: 0 4px 10px rgba(0,0,0,.45);
+    }
+    #trscMenu.trscOpen {
+      display: grid;
+      gap: 4px;
+    }
+    #trscMenu button {
+      border: 1px solid #555;
+      border-radius: 3px;
       background: #222;
       color: #eee;
       font: inherit;
       padding: 4px 6px;
+      text-align: left;
       cursor: pointer;
     }
-    #trscControls button:hover {
-      border-color: #e65a3a;
+    #trscMenu button:hover {
+      border-color: #52df82;
     }
     #trscStatus {
-      min-width: 70px;
+      display: block;
+      padding: 2px 3px 0;
       color: #bbb;
+      white-space: nowrap;
     }
   `);
 
@@ -396,6 +458,7 @@
     }
 
     ensureControls();
+    setInterval(ensureControls, 1000);
   }
 
   bootControls();

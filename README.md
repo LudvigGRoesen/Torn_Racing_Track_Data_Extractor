@@ -28,9 +28,9 @@ If `BROWSER_RACING_COLLECTOR_TOKEN` is set in the app `.env`, configure the same
 Authorization: Bearer <token>
 ```
 
-## Export formats
+## UI and export formats
 
-The floating collector bar supports:
+The script adds a green `Collect` button in the Torn race title bar next to the track info icon. The button menu supports:
 
 - Upload latest JSON snapshot
 - Upload all JSON snapshots
