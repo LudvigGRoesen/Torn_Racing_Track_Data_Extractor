@@ -44,7 +44,7 @@ The script adds a green `Collect` button in the Torn race title bar to the left 
 
 ## Faction markers
 
-Use `Set Torn API key` in the userscript menu to store a Torn API key in the userscript manager. `Faction marks` fetches the current user's profile and the visible race participants' public profiles directly from Torn API v2, compares faction IDs in the browser, and adds a small faction shorthand badge next to matching racers.
+Use `Set Torn API key` in the userscript menu to store a Torn API key in the userscript manager. `Faction marks: ON/OFF` toggles the feature and shows its current state in the menu. When enabled, it reads visible race participant IDs from the leaderboard rows, fetches the current user's profile and the participants' public profiles directly from Torn API v2, compares faction IDs in the browser, and adds a small faction shorthand badge next to matching racers.
 
 Faction information is not uploaded to the app and is not stored in the database. Participant profile results are only cached in memory for a few minutes while the page is open.
 

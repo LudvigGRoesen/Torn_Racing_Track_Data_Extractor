@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Racing Segment Collector
 // @namespace    local.torn-racing-dashboard
-// @version      0.1.0
+// @version      0.1.1
 // @description  Captures Torn race segment intervals and driver segment times for export or upload.
 // @match        https://www.torn.com/*
 // @run-at       document-start
@@ -23,6 +23,7 @@
   const endpointKey = 'trsc_upload_endpoint';
   const tokenKey = 'trsc_upload_token';
   const tornApiKey = 'trsc_torn_api_key';
+  const factionMarkersEnabledKey = 'trsc_faction_markers_enabled';
   const defaultEndpoint = 'http://localhost:3000/api/browser/racing-segments';
   const tornApiBaseUrl = 'https://api.torn.com/v2';
   const maxSnapshots = 50;
@@ -379,13 +380,14 @@
     document.getElementById('trscSendJsonFile').addEventListener('click', sendJsonFile);
     document.getElementById('trscJson').addEventListener('click', downloadJson);
     document.getElementById('trscCsv').addEventListener('click', downloadCsv);
-    document.getElementById('trscFactionMarkers').addEventListener('click', refreshFactionMarkers);
+    document.getElementById('trscFactionMarkers').addEventListener('click', toggleFactionMarkers);
     document.getElementById('trscSetApiKey').addEventListener('click', configureTornApiKey);
     document.getElementById('trscClear').addEventListener('click', clearSnapshots);
     document.addEventListener('click', closeCollectMenu);
     window.addEventListener('resize', positionCollectMenu, { passive: true });
     window.addEventListener('scroll', positionCollectMenu, { passive: true });
     updateButtonLabel();
+    updateFactionToggleButton();
     refreshFactionMarkers({ silent: true });
   }
 
@@ -402,7 +404,7 @@
       <button id="trscSendJsonFile" type="button">Send JSON file</button>
       <button id="trscJson" type="button">JSON</button>
       <button id="trscCsv" type="button">CSV</button>
-      <button id="trscFactionMarkers" type="button">Faction marks</button>
+      <button id="trscFactionMarkers" type="button">Faction marks: OFF</button>
       <button id="trscSetApiKey" type="button">Set Torn API key</button>
       <button id="trscClear" type="button">Clear</button>
       <span id="trscStatus"></span>
@@ -426,11 +428,37 @@
     clearFactionMarkers();
 
     if (value) {
+      GM_setValue(factionMarkersEnabledKey, true);
+      updateFactionToggleButton();
       refreshFactionMarkers();
+    } else {
+      GM_setValue(factionMarkersEnabledKey, false);
+      updateFactionToggleButton();
+      updateFactionStatus(null);
     }
   }
 
+  function toggleFactionMarkers() {
+    const enabled = !areFactionMarkersEnabled();
+    GM_setValue(factionMarkersEnabledKey, enabled);
+    updateFactionToggleButton();
+
+    if (!enabled) {
+      clearFactionMarkers();
+      updateFactionStatus(null);
+      return;
+    }
+
+    refreshFactionMarkers();
+  }
+
   async function refreshFactionMarkers(options = {}) {
+    if (!areFactionMarkersEnabled()) {
+      clearFactionMarkers();
+      updateFactionToggleButton();
+      return;
+    }
+
     const apiKey = String(GM_getValue(tornApiKey, '') || '').trim();
 
     if (!apiKey) {
@@ -443,7 +471,7 @@
       return;
     }
 
-    const participants = getRaceParticipantLinks();
+    const participants = getRaceParticipants();
 
     if (participants.length === 0) {
       factionMarkerState.lastRunAt = Date.now();
@@ -477,10 +505,10 @@
         const faction = readFaction(profile);
 
         if (faction?.id && faction.id === ownFaction.id) {
-          markParticipant(participant.link, readFactionShorthand(faction));
+          markParticipant(participant.nameElement, readFactionShorthand(faction));
           matches += 1;
         } else {
-          unmarkParticipant(participant.link);
+          unmarkParticipant(participant.nameElement);
         }
       }
 
@@ -493,8 +521,24 @@
     }
   }
 
-  function getRaceParticipantLinks() {
-    const list = document.querySelector('.drivers-list');
+  function areFactionMarkersEnabled() {
+    return Boolean(GM_getValue(factionMarkersEnabledKey, false));
+  }
+
+  function updateFactionToggleButton() {
+    const button = document.getElementById('trscFactionMarkers');
+
+    if (!button) {
+      return;
+    }
+
+    const enabled = areFactionMarkersEnabled();
+    button.textContent = `Faction marks: ${enabled ? 'ON' : 'OFF'}`;
+    button.classList.toggle('trscActive', enabled);
+  }
+
+  function getRaceParticipants() {
+    const list = document.querySelector('#leaderBoard') || document.querySelector('.drivers-list');
 
     if (!list) {
       return [];
@@ -502,6 +546,18 @@
 
     const seen = new Set();
     const participants = [];
+
+    for (const row of list.querySelectorAll(':scope > li')) {
+      const tornUserId = readTornUserIdFromRaceRow(row);
+      const nameElement = row.querySelector('.name span') || row.querySelector('.name') || row.querySelector('a[href]');
+
+      if (!tornUserId || !nameElement || seen.has(tornUserId)) {
+        continue;
+      }
+
+      seen.add(tornUserId);
+      participants.push({ nameElement, tornUserId });
+    }
 
     for (const link of list.querySelectorAll('a[href]')) {
       const tornUserId = readTornUserIdFromUrl(link.getAttribute('href'));
@@ -511,10 +567,22 @@
       }
 
       seen.add(tornUserId);
-      participants.push({ link, tornUserId });
+      participants.push({ nameElement: link, tornUserId });
     }
 
     return participants;
+  }
+
+  function readTornUserIdFromRaceRow(row) {
+    const idMatch = String(row.id || '').match(/^lbr-(\d+)$/i);
+
+    if (idMatch) {
+      return Number(idMatch[1]);
+    }
+
+    const dataIdMatch = String(row.getAttribute('data-id') || '').match(/-(\d+)$/);
+    const tornUserId = dataIdMatch ? Number(dataIdMatch[1]) : NaN;
+    return Number.isInteger(tornUserId) && tornUserId > 0 ? tornUserId : null;
   }
 
   function readTornUserIdFromUrl(url) {
@@ -614,8 +682,8 @@
     return (initials || 'FAC').slice(0, 4);
   }
 
-  function markParticipant(link, shorthand) {
-    const existing = link.parentNode?.querySelector?.(':scope > .trscFactionMarker');
+  function markParticipant(nameElement, shorthand) {
+    const existing = nameElement.parentNode?.querySelector?.(':scope > .trscFactionMarker');
 
     if (existing) {
       existing.textContent = shorthand;
@@ -626,11 +694,11 @@
     marker.className = 'trscFactionMarker';
     marker.textContent = shorthand;
     marker.title = 'Same faction as you';
-    link.insertAdjacentElement('afterend', marker);
+    nameElement.insertAdjacentElement('afterend', marker);
   }
 
-  function unmarkParticipant(link) {
-    const marker = link.parentNode?.querySelector?.(':scope > .trscFactionMarker');
+  function unmarkParticipant(nameElement) {
+    const marker = nameElement.parentNode?.querySelector?.(':scope > .trscFactionMarker');
     marker?.remove();
   }
 
@@ -769,6 +837,12 @@
     #trscMenu button:hover {
       border-color: #52df82;
     }
+    #trscMenu button.trscActive {
+      border-color: #52df82;
+      background: #173a24;
+      color: #91d9a9;
+      font-weight: bold;
+    }
     #trscStatus {
       display: block;
       padding: 2px 3px 0;
@@ -791,8 +865,12 @@
       color: #91d9a9;
       font: 10px Arial, sans-serif;
       font-weight: bold;
-      line-height: 14px;
+      line-height: 12px;
       vertical-align: middle;
+    }
+    #leaderBoard .name .trscFactionMarker {
+      float: right;
+      margin: 2px 4px 0 6px;
     }
   `);
 
