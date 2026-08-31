@@ -34,8 +34,18 @@ The script adds a green `Collect` button in the Torn race title bar to the left 
 
 - Upload latest JSON snapshot
 - Upload all JSON snapshots
+- Send JSON file payload directly to the upload endpoint
 - Download JSON snapshots
 - Download CSV rows
+- Mark racers who are in the same faction as the current Torn API key owner
 - Clear local snapshots
+
+`Send JSON file` posts the same JSON array that `Download JSON snapshots` would save, but sends it directly to the configured endpoint instead of downloading it. The backend accepts one snapshot object, an array of snapshots, or `{ "snapshots": [...] }`.
+
+## Faction markers
+
+Use `Set Torn API key` in the userscript menu to store a Torn API key in the userscript manager. `Faction marks` fetches the current user's profile and the visible race participants' public profiles directly from Torn API v2, compares faction IDs in the browser, and adds a small faction shorthand badge next to matching racers.
+
+Faction information is not uploaded to the app and is not stored in the database. Participant profile results are only cached in memory for a few minutes while the page is open.
 
 This is intentionally separate from the main app for now. It can become a real browser extension later.

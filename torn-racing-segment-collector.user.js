@@ -22,8 +22,17 @@
   const storageKey = 'trsc_snapshots';
   const endpointKey = 'trsc_upload_endpoint';
   const tokenKey = 'trsc_upload_token';
+  const tornApiKey = 'trsc_torn_api_key';
   const defaultEndpoint = 'http://localhost:3000/api/browser/racing-segments';
+  const tornApiBaseUrl = 'https://api.torn.com/v2';
   const maxSnapshots = 50;
+  const profileCacheTtlMs = 5 * 60 * 1000;
+  const factionMarkerState = {
+    loading: false,
+    lastRunAt: 0,
+    ownProfile: null,
+    profileCache: new Map(),
+  };
 
   function installXhrCapture() {
     const XHR = pageWindow.XMLHttpRequest;
@@ -199,7 +208,28 @@
     next();
   }
 
+  function sendJsonFile() {
+    const snapshots = getSnapshots();
+
+    if (snapshots.length === 0) {
+      alert('No race segment snapshots captured yet.');
+      return;
+    }
+
+    uploadPayload(snapshots, (result) => {
+      const created = result?.created ?? 0;
+      const duplicates = result?.duplicates ?? 0;
+      alert(`JSON file sent. Created ${created}, duplicates ${duplicates}.`);
+    });
+  }
+
   function uploadSnapshot(snapshot, onDone) {
+    uploadPayload(snapshot, () => {
+      onDone?.();
+    });
+  }
+
+  function uploadPayload(payload, onDone) {
     const endpoint = String(GM_getValue(endpointKey, defaultEndpoint) || defaultEndpoint);
     const token = String(GM_getValue(tokenKey, '') || '').trim();
     const headers = {
@@ -214,12 +244,12 @@
       method: 'POST',
       url: endpoint,
       headers,
-      data: JSON.stringify(snapshot),
+      data: JSON.stringify(payload),
       timeout: 30000,
       onload: (response) => {
         if (response.status >= 200 && response.status < 300) {
           console.info('[Torn Racing Segment Collector] Upload succeeded', response.responseText);
-          onDone?.();
+          onDone?.(readJsonResponse(response.responseText));
           return;
         }
 
@@ -228,6 +258,14 @@
       onerror: () => alert('Upload failed.'),
       ontimeout: () => alert('Upload timed out.'),
     });
+  }
+
+  function readJsonResponse(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
   }
 
   function downloadJson() {
@@ -338,13 +376,17 @@
     });
     document.getElementById('trscUploadLatest').addEventListener('click', uploadLatestSnapshot);
     document.getElementById('trscUploadAll').addEventListener('click', uploadAllSnapshots);
+    document.getElementById('trscSendJsonFile').addEventListener('click', sendJsonFile);
     document.getElementById('trscJson').addEventListener('click', downloadJson);
     document.getElementById('trscCsv').addEventListener('click', downloadCsv);
+    document.getElementById('trscFactionMarkers').addEventListener('click', refreshFactionMarkers);
+    document.getElementById('trscSetApiKey').addEventListener('click', configureTornApiKey);
     document.getElementById('trscClear').addEventListener('click', clearSnapshots);
     document.addEventListener('click', closeCollectMenu);
     window.addEventListener('resize', positionCollectMenu, { passive: true });
     window.addEventListener('scroll', positionCollectMenu, { passive: true });
     updateButtonLabel();
+    refreshFactionMarkers({ silent: true });
   }
 
   function ensureCollectMenu() {
@@ -357,12 +399,253 @@
     menu.innerHTML = `
       <button id="trscUploadLatest" type="button">Upload latest</button>
       <button id="trscUploadAll" type="button">Upload all</button>
+      <button id="trscSendJsonFile" type="button">Send JSON file</button>
       <button id="trscJson" type="button">JSON</button>
       <button id="trscCsv" type="button">CSV</button>
+      <button id="trscFactionMarkers" type="button">Faction marks</button>
+      <button id="trscSetApiKey" type="button">Set Torn API key</button>
       <button id="trscClear" type="button">Clear</button>
       <span id="trscStatus"></span>
+      <span id="trscFactionStatus"></span>
     `;
     document.body.appendChild(menu);
+  }
+
+  function configureTornApiKey() {
+    const current = String(GM_getValue(tornApiKey, '') || '');
+    const entered = prompt('Torn API key for faction markers. Leave empty to remove it.', current);
+
+    if (entered === null) {
+      return;
+    }
+
+    const value = entered.trim();
+    GM_setValue(tornApiKey, value);
+    factionMarkerState.ownProfile = null;
+    factionMarkerState.profileCache.clear();
+    clearFactionMarkers();
+
+    if (value) {
+      refreshFactionMarkers();
+    }
+  }
+
+  async function refreshFactionMarkers(options = {}) {
+    const apiKey = String(GM_getValue(tornApiKey, '') || '').trim();
+
+    if (!apiKey) {
+      clearFactionMarkers();
+      updateFactionStatus(options.silent ? null : 'Set Torn API key first');
+      return;
+    }
+
+    if (factionMarkerState.loading) {
+      return;
+    }
+
+    const participants = getRaceParticipantLinks();
+
+    if (participants.length === 0) {
+      factionMarkerState.lastRunAt = Date.now();
+      updateFactionStatus(null);
+      return;
+    }
+
+    factionMarkerState.loading = true;
+    factionMarkerState.lastRunAt = Date.now();
+    updateFactionStatus('Checking faction...');
+
+    try {
+      const ownProfile = await getOwnProfile(apiKey);
+      const ownFaction = readFaction(ownProfile);
+
+      if (!ownFaction?.id) {
+        clearFactionMarkers();
+        updateFactionStatus('No faction on profile');
+        return;
+      }
+
+      const uniqueIds = [...new Set(participants.map((participant) => participant.tornUserId))];
+      const profiles = await Promise.all(
+        uniqueIds.map((tornUserId) => getProfileById(apiKey, tornUserId).catch(() => null)),
+      );
+      const profileById = new Map(uniqueIds.map((tornUserId, index) => [tornUserId, profiles[index]]));
+      let matches = 0;
+
+      for (const participant of participants) {
+        const profile = profileById.get(participant.tornUserId);
+        const faction = readFaction(profile);
+
+        if (faction?.id && faction.id === ownFaction.id) {
+          markParticipant(participant.link, readFactionShorthand(faction));
+          matches += 1;
+        } else {
+          unmarkParticipant(participant.link);
+        }
+      }
+
+      updateFactionStatus(matches > 0 ? `${matches} faction marked` : 'No faction matches');
+    } catch (error) {
+      console.warn('[Torn Racing Segment Collector] Could not refresh faction markers', error);
+      updateFactionStatus('Faction check failed');
+    } finally {
+      factionMarkerState.loading = false;
+    }
+  }
+
+  function getRaceParticipantLinks() {
+    const list = document.querySelector('.drivers-list');
+
+    if (!list) {
+      return [];
+    }
+
+    const seen = new Set();
+    const participants = [];
+
+    for (const link of list.querySelectorAll('a[href]')) {
+      const tornUserId = readTornUserIdFromUrl(link.getAttribute('href'));
+
+      if (!tornUserId || seen.has(tornUserId)) {
+        continue;
+      }
+
+      seen.add(tornUserId);
+      participants.push({ link, tornUserId });
+    }
+
+    return participants;
+  }
+
+  function readTornUserIdFromUrl(url) {
+    const match = String(url || '').match(/[?&]XID=(\d+)/i) || String(url || '').match(/\/profiles\.php\?(?:[^#]*&)?XID=(\d+)/i);
+    const tornUserId = match ? Number(match[1]) : NaN;
+    return Number.isInteger(tornUserId) && tornUserId > 0 ? tornUserId : null;
+  }
+
+  async function getOwnProfile(apiKey) {
+    if (factionMarkerState.ownProfile) {
+      return factionMarkerState.ownProfile;
+    }
+
+    const payload = await tornGet(apiKey, '/user', { selections: 'profile' });
+    const profile = payload.profile || payload;
+    factionMarkerState.ownProfile = profile;
+    return profile;
+  }
+
+  async function getProfileById(apiKey, tornUserId) {
+    const cached = factionMarkerState.profileCache.get(tornUserId);
+
+    if (cached && Date.now() - cached.cachedAt < profileCacheTtlMs) {
+      return cached.profile;
+    }
+
+    const payload = await tornGet(apiKey, `/user/${tornUserId}/profile`);
+    const profile = payload.profile || payload;
+    factionMarkerState.profileCache.set(tornUserId, { cachedAt: Date.now(), profile });
+    return profile;
+  }
+
+  function tornGet(apiKey, path, params = {}) {
+    const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+    const url = new URL(normalizedPath, `${tornApiBaseUrl}/`);
+
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value);
+    }
+
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: url.toString(),
+        headers: {
+          accept: 'application/json',
+          Authorization: `ApiKey ${apiKey}`,
+        },
+        timeout: 30000,
+        onload: (response) => {
+          const payload = readJsonResponse(response.responseText) || {};
+
+          if (response.status >= 200 && response.status < 300 && !payload.error) {
+            resolve(payload);
+            return;
+          }
+
+          reject(new Error(payload.error?.error || `Torn API request failed (${response.status})`));
+        },
+        onerror: () => reject(new Error('Torn API request failed')),
+        ontimeout: () => reject(new Error('Torn API request timed out')),
+      });
+    });
+  }
+
+  function readFaction(profile) {
+    if (!profile || typeof profile !== 'object') {
+      return null;
+    }
+
+    const faction = profile.faction && typeof profile.faction === 'object' ? profile.faction : profile;
+    const id = Number(faction.id ?? faction.faction_id ?? profile.faction_id ?? profile.factionID);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return null;
+    }
+
+    return {
+      id,
+      name: String(faction.name ?? faction.faction_name ?? profile.faction_name ?? ''),
+      tag: String(faction.tag ?? faction.short_name ?? faction.shortName ?? faction.abbreviation ?? ''),
+    };
+  }
+
+  function readFactionShorthand(faction) {
+    if (faction.tag.trim()) {
+      return faction.tag.trim().slice(0, 8);
+    }
+
+    const initials = faction.name
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase();
+
+    return (initials || 'FAC').slice(0, 4);
+  }
+
+  function markParticipant(link, shorthand) {
+    const existing = link.parentNode?.querySelector?.(':scope > .trscFactionMarker');
+
+    if (existing) {
+      existing.textContent = shorthand;
+      return;
+    }
+
+    const marker = document.createElement('span');
+    marker.className = 'trscFactionMarker';
+    marker.textContent = shorthand;
+    marker.title = 'Same faction as you';
+    link.insertAdjacentElement('afterend', marker);
+  }
+
+  function unmarkParticipant(link) {
+    const marker = link.parentNode?.querySelector?.(':scope > .trscFactionMarker');
+    marker?.remove();
+  }
+
+  function clearFactionMarkers() {
+    for (const marker of document.querySelectorAll('.trscFactionMarker')) {
+      marker.remove();
+    }
+  }
+
+  function updateFactionStatus(message) {
+    const status = document.getElementById('trscFactionStatus');
+
+    if (status) {
+      status.textContent = message || '';
+    }
   }
 
   function toggleCollectMenu() {
@@ -492,6 +775,25 @@
       color: #bbb;
       white-space: nowrap;
     }
+    #trscFactionStatus {
+      display: block;
+      padding: 0 3px 2px;
+      color: #91d9a9;
+      white-space: nowrap;
+    }
+    .trscFactionMarker {
+      display: inline-block;
+      margin-left: 4px;
+      padding: 0 4px;
+      border: 1px solid #1c8d45;
+      border-radius: 3px;
+      background: #173a24;
+      color: #91d9a9;
+      font: 10px Arial, sans-serif;
+      font-weight: bold;
+      line-height: 14px;
+      vertical-align: middle;
+    }
   `);
 
   installXhrCapture();
@@ -503,7 +805,13 @@
     }
 
     ensureControls();
-    setInterval(ensureControls, 1000);
+    setInterval(() => {
+      ensureControls();
+
+      if (Date.now() - factionMarkerState.lastRunAt > 10000) {
+        refreshFactionMarkers({ silent: true });
+      }
+    }, 1000);
   }
 
   bootControls();
